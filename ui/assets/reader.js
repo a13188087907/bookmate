@@ -1072,29 +1072,81 @@ function trackReadingPosition() {
   updateStatus();
 }
 
-/* 章节导轨（顶层函数：buildLayout 装配元素，openBook 重建内容） */
+/* 章节导轨（顶层函数：buildLayout 装配元素，openBook 重建内容）
+   鱼眼模型：静止时刻度均匀压缩为全书地图（当前章青铜标记）；悬停时指尖 ±radius 章内
+   刻度按余弦曲线放大成可点目标，rAF 平滑趋近，离开收回。宽度金字塔由 railHover 叠加。 */
+const railFx = { items: [], base: 10, maxH: 18, radius: 8, hoverIdx: null, heights: [], raf: 0 };
+
 function buildRail() {
   const rail = document.querySelector(".rail");
   const proto = $("#proto");
   if (!rail || !proto) return;
   rail.textContent = "";
+  railFx.items = [];
+  railFx.hoverIdx = null;
+  if (railFx.raf) { cancelAnimationFrame(railFx.raf); railFx.raf = 0; }
   const n = state.chapters.length;
   if (!n) return;
-  const avail = Math.max(200, proto.clientHeight - 180);
-  rail.style.setProperty("--rail-size", Math.max(6, Math.min(22, Math.floor(avail / n))) + "px");
+  const avail = Math.max(160, proto.clientHeight - 120);
+  railFx.base = Math.max(2, Math.min(22, Math.floor(avail / n)));
+  railFx.heights = state.chapters.map(() => railFx.base);
   state.chapters.forEach((ch, i) => {
     const item = el("button", "rail-item" + (i === state.chapterIdx ? " current" : ""));
     item.dataset.idx = i;
     item.title = ch.title;
+    item.style.height = railFx.base + "px";
     item.append(el("span", "rail-tick"));
-    item.addEventListener("mouseenter", () => railHover(i));
-    item.addEventListener("focus", () => railHover(i));
+    item.addEventListener("pointerenter", () => {
+      railFx.hoverIdx = i;
+      railHover(i);
+      railFxStep();
+    });
+    item.addEventListener("focus", () => {
+      railFx.hoverIdx = i;
+      railHover(i);
+      railFxStep();
+    });
     item.addEventListener("click", async () => {
+      railFx.hoverIdx = null;
       railHover(null);
+      railFxStep();
       await jumpToChapter(i);
     });
     rail.append(item);
+    railFx.items.push(item);
   });
+  if (!rail.__fxBound) {
+    rail.__fxBound = true;
+    rail.addEventListener("pointerleave", () => {
+      railFx.hoverIdx = null;
+      railHover(null);
+      railFxStep();
+    });
+  }
+}
+
+/* 鱼眼动画：所有刻度向目标高度趋近（余弦衰减的放大窗口），稳定后自停 */
+function railFxStep() {
+  if (railFx.raf) return;
+  const step = () => {
+    railFx.raf = 0;
+    let moving = false;
+    for (let j = 0; j < railFx.items.length; j++) {
+      const d = railFx.hoverIdx == null ? Infinity : Math.abs(j - railFx.hoverIdx);
+      const boost =
+        d <= railFx.radius
+          ? (railFx.maxH - railFx.base) * (0.5 + 0.5 * Math.cos((Math.PI * d) / (railFx.radius + 1)))
+          : 0;
+      const targetH = railFx.base + boost;
+      const cur = railFx.heights[j];
+      const next = cur + (targetH - cur) * 0.3;
+      if (Math.abs(next - targetH) > 0.15 || Math.abs(next - cur) > 0.15) moving = true;
+      railFx.heights[j] = next;
+      railFx.items[j].style.height = next.toFixed(1) + "px";
+    }
+    if (moving) railFx.raf = requestAnimationFrame(step);
+  };
+  railFx.raf = requestAnimationFrame(step);
 }
 
 function railHover(i) {
@@ -1119,7 +1171,8 @@ function railHover(i) {
   railPreview.append(document.createTextNode(ch.title));
   const rect = items[i].getBoundingClientRect();
   const hostRect = proto.getBoundingClientRect();
-  railPreview.style.top = Math.max(8, Math.min(rect.top - hostRect.top - 6, hostRect.height - 70)) + "px";
+  const itemCenter = rect.top - hostRect.top + rect.height / 2;
+  railPreview.style.top = Math.max(8, Math.min(itemCenter - 20, hostRect.height - 70)) + "px";
   railPreview.classList.add("show");
 }
 
