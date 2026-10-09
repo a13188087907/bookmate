@@ -1,0 +1,57 @@
+{
+  "manifestVersion": 2,
+  "id": "bookmate",
+  "name": "书友 · AI 陪伴阅读",
+  "version": "1.0.0",
+  "description": "EPUB 沉浸式阅读与书友式章节对话。陪伴阅读、反思阅读、跨章节记忆。",
+  "entry": "index.js",
+  "icon": "assets/icon.svg",
+  "minAppVersion": "1.0.0-beta",
+  "capabilities": [
+    "app/process.spawn",
+    "app/resources.read",
+    "app/resources.write",
+    "app/tools.expose-to-model",
+    "app/session.start-turn",
+    "app/agents.read",
+    "app/models.infer"
+  ],
+  "contributes": {
+    "settings": {
+      "title": "书友",
+      "schema": {
+        "properties": {
+          "pythonCommand": {
+            "type": "string",
+            "title": "Python command",
+            "description": "用于 EPUB 解析的 Python 可执行命令。",
+            "default": "python"
+          },
+          "exportDir": {
+            "type": "string",
+            "title": "导出目录",
+            "description": "Markdown 导出目录。建议指向生活外脑 raw/阅读 目录",
+            "default": ""
+          },
+          "companionAgentId": {
+            "type": "string",
+            "title": "书友人格 Agent",
+            "description": "书友对话使用的专用助手。留空则跟随当前助手；首次使用会自动复用或创建专用「书友」助手并填入此处。",
+            "default": ""
+          }
+        }
+      }
+    },
+    "cards": [
+      {
+        "id": "reader",
+        "title": "书友",
+        "description": "EPUB 沉浸式阅读与书友式章节对话：书库管理、章节阅读、划线、骨架沉淀、Markdown 导出",
+        "route": "/reader.html",
+        "realization": "page",
+        "cardForm": "structural",
+        "face": { "image": "assets/cover.svg" }
+      }
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>书友</title>
+<link rel="stylesheet" href="./assets/reader.css">
+</head>
+<body>
+<script>
+// v2 引导：主题/locale/宿主 CSS 从 URL 参数恢复（v1 由后端路由注入 body），并行加载 SDK 完成握手
+(function () {
+  var q = new URLSearchParams(location.search);
+  var theme = q.get("hana-theme") || "inherit";
+  var locale = q.get("hana-locale") || q.get("locale") || q.get("lang") || "";
+  var hanaCss = q.get("hana-css") || "";
+  document.body.setAttribute("data-hana-theme", theme);
+  document.body.setAttribute("data-hana-locale", locale);
+  if (hanaCss) {
+    var link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = hanaCss;
+    document.head.appendChild(link);
+  }
+  var lang = String(locale).trim().toLowerCase();
+  document.documentElement.lang = lang.indexOf("zh") === 0 ? "zh-CN" : lang.indexOf("ja") === 0 ? "ja" : lang.indexOf("ko") === 0 ? "ko" : "en";
+})();
+window.__hanaReady = import("./assets/sdk.js").then(function (m) { m.hana.ready(); }).catch(function () {});
+</script>
+<div id="root"></div>
+<script type="module" src="./assets/reader.js"></script>
+</body>
+</html>

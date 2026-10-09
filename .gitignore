@@ -1,0 +1,12 @@
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# Node
+node_modules/
+
+# Local scratch
+_scratch/
