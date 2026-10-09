@@ -289,14 +289,6 @@ function buildLayout() {
   sbHead.append(acts);
 
   const sbMenu = el("div", "sb-menu");
-  const agentRow = el("div", "menu-row");
-  agentRow.append(el("label", null, "书友"));
-  const agentSelect = el("select");
-  const defaultOpt = el("option", null, "默认助手（书友人格）");
-  defaultOpt.value = "";
-  agentSelect.append(defaultOpt);
-  agentRow.append(agentSelect);
-  sbMenu.append(agentRow, el("div", "sep"));
   const menuItem = (label, fn, cls, title) => {
     const b = el("button", cls || null, label);
     if (title) b.title = title;
@@ -324,37 +316,6 @@ function buildLayout() {
   document.addEventListener("click", (e) => {
     if (!sbMenu.contains(e.target) && e.target !== menuBtn) sbMenu.classList.remove("open");
   });
-
-  const syncAgentSelection = () => {
-    const saved = readLS("bookmate.agent", "");
-    const exists = [...agentSelect.options].some((o) => o.value === saved);
-    if (!exists) {
-      agentSelect.value = "";
-      writeLS("bookmate.agent", "");
-    } else {
-      agentSelect.value = saved;
-    }
-    state.agentId = agentSelect.value || null;
-    whoEl.textContent = companionName();
-  };
-  agentSelect.addEventListener("change", () => {
-    writeLS("bookmate.agent", agentSelect.value);
-    state.agentId = agentSelect.value || null;
-    whoEl.textContent = companionName();
-  });
-  syncAgentSelection();
-  api("/api/agents")
-    .then((data) => {
-      const agents = Array.isArray(data?.agents) ? data.agents : [];
-      for (const a of agents) {
-        if (!a?.id) continue;
-        const opt = el("option", null, a.name || a.id);
-        opt.value = a.id;
-        agentSelect.append(opt);
-      }
-      syncAgentSelection();
-    })
-    .catch(() => {});
 
   const sbBody = el("div", "sb-body");
   const quoteBar = el("div", "quote-bar");
@@ -516,6 +477,23 @@ function renderAaPanel(panel) {
     applyReaderSettings({ ...getReaderSettings(), lineHeight: lhRange.value / 10 });
   });
 
+  /* 页宽滑杆：26–56em 连续；推到头（57 档）为「满」= min(92%,72em) */
+  const MS_FULL = 57;
+  const msRange = el("input");
+  msRange.type = "range";
+  msRange.min = 26; msRange.max = MS_FULL; msRange.step = 1;
+  const msVal = el("span", "aa-val");
+  const msSync = (m) => { msVal.textContent = m > 0 ? `${m}em` : "满"; };
+  const msInit = Number(s.measure) > 0 ? Number(s.measure) : 0;
+  msSync(msInit);
+  msRange.value = msInit > 0 ? msInit : MS_FULL;
+  msRange.addEventListener("input", () => {
+    const v = Number(msRange.value);
+    const m = v >= MS_FULL ? 0 : v;
+    msSync(m);
+    applyReaderSettings({ ...getReaderSettings(), measure: m });
+  });
+
   panel.append(
     mkRow("字体", fontSelect, importFontBtn),
     mkRow("字号", fsRange, fsVal),
@@ -523,9 +501,7 @@ function renderAaPanel(panel) {
     mkRow("主题", mkSeg([["follow", "跟随"], ["light", "暖纸"], ["dark", "墨夜"]], s.theme, (v) =>
       applyReaderSettings({ ...getReaderSettings(), theme: v })
     )),
-    mkRow("页宽", mkSeg([["30", "窄"], ["38", "适"], ["46", "宽"], ["0", "满"]], String(s.measure ?? 38), (v) =>
-      applyReaderSettings({ ...getReaderSettings(), measure: Number(v) })
-    )),
+    mkRow("页宽", msRange, msVal),
     mkRow("纸纹", mkSeg([["on", "开"], ["off", "关"]], s.texture ? "on" : "off", (v) =>
       applyReaderSettings({ ...getReaderSettings(), texture: v === "on" })
     )),
@@ -1140,7 +1116,7 @@ function railHover(i) {
   const ch = state.chapters[i];
   if (!ch) return;
   railPreview.innerHTML = "";
-  railPreview.append(el("div", "pos", `第 ${i + 1} / ${state.chapters.length} 章`), document.createTextNode(ch.title));
+  railPreview.append(document.createTextNode(ch.title));
   const rect = items[i].getBoundingClientRect();
   const hostRect = proto.getBoundingClientRect();
   railPreview.style.top = Math.max(8, Math.min(rect.top - hostRect.top - 6, hostRect.height - 70)) + "px";
@@ -1485,7 +1461,9 @@ async function distillChapter() {
   try {
     const res = await api(`/api/books/${state.bookId}/chapters/${state.chapterIdx}/distill`, {
       method: "POST",
-      body: {},
+      body: {
+        dialog: state.history.slice(-12).map((m) => ({ role: m.role, content: m.content })),
+      },
     });
     toast(res.ok && res.note?.theme ? `已沉淀：${res.note.theme}` : "已沉淀本章");
   } catch (err) {
@@ -1529,9 +1507,9 @@ function hanaPickDirectory() {
     .then((res) => res?.resources?.[0]?.path ?? null);
 }
 
-/* 当前书友的显示名：选定 agent 用其 id，默认助手用配置的人格名 */
+/* 书友显示名：固定人格名（人格全文在应用设置里可改） */
 function companionName() {
-  return state.agentId ? state.agentId : state.settings?.companionName || "书友";
+  return "书友";
 }
 
 function saveChatArchive() {
@@ -1545,6 +1523,7 @@ async function sendMessage() {
   if ((!message && !state.pendingQuote) || state.busy || !state.bookId || state.viewingThread) return;
   const quote = state.pendingQuote?.text || undefined;
   const sendChapter = state.chapterIdx; // 上下文随当下阅读位置，记录仍是全书一段
+  const sendPara = state.lastVisiblePara || 0;
   input.value = "";
   state.pendingQuote = null;
   renderQuoteBar();
@@ -1555,7 +1534,8 @@ async function sendMessage() {
   state.busy = true;
   $(".composer-row button").disabled = true;
   try {
-    const reply = await converseStream(sendChapter, userEntry.content, quote);
+    const historyPayload = state.history.slice(-9, -1).map((m) => ({ role: m.role, content: m.content }));
+    const reply = await converseStream(sendChapter, sendPara, userEntry.content, quote, historyPayload);
     state.history.push({ role: "companion", content: reply });
     saveChatArchive();
   } catch (err) {
@@ -1567,13 +1547,13 @@ async function sendMessage() {
   renderChat();
 }
 
-/* 流式对话：fetch + ReadableStream 读 SSE，增量追加到消息气泡。返回完整回复。 */
-async function converseStream(chapter, message, quote) {
+/* 流式对话：fetch + ReadableStream 读 SSE。事件：thinking（推理增量）/ delta（正文增量）/ done / error。 */
+async function converseStream(chapter, para, message, quote, history) {
   const url = `${apiBase}/api/books/${state.bookId}/converse/stream?appSurfaceSession=${encodeURIComponent(ticket)}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chapter, message, agentId: state.agentId || undefined, quote }),
+    body: JSON.stringify({ chapter, para, message, quote, history }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -1605,6 +1585,8 @@ async function converseStream(chapter, message, quote) {
         if (ev.type === "delta" && typeof ev.text === "string") {
           accumulated += ev.text;
           bubble.render(accumulated);
+        } else if (ev.type === "thinking") {
+          bubble.thinking();
         } else if (ev.type === "done") {
           const reply = typeof ev.reply === "string" ? ev.reply : accumulated;
           bubble.render(reply);
@@ -1627,15 +1609,16 @@ async function converseStream(chapter, message, quote) {
 function appendStreamBubble() {
   const body = $(".sb-body");
   const wrap = el("div", "letter");
+  const status = el("div", "letter-status", "书友执笔中");
   const html = el("div", "lbody md");
-  wrap.append(html);
+  wrap.append(status, html);
   body.append(wrap);
   body.scrollTop = body.scrollHeight;
-  /* 逐字显现：宿主目前整条下发回复（无流式增量），前端按已收到文本递进展示；
-     未来宿主真出增量时，delta 会推动 target 增长，同一套逻辑即变成真流式 */
+  /* 真流式：delta 推动 target 增长；tick 把突发增量平滑成逐字显现 */
   let target = "";
   let shown = 0;
   let timer = null;
+  let started = false;
   const tick = () => {
     if (shown >= target.length) { timer = null; return; }
     shown = Math.min(target.length, shown + Math.max(2, Math.round(target.length / 120)));
@@ -1645,10 +1628,15 @@ function appendStreamBubble() {
   };
   return {
     render(text) {
+      if (!started) { started = true; status.remove(); }
       target = String(text ?? "");
       if (timer == null) tick();
     },
+    thinking() {
+      if (!started) status.textContent = "思考中";
+    },
     finish() {
+      status.remove();
       if (!wrap.querySelector(".sign")) {
         wrap.append(el("div", "sign", "—— " + companionName()));
       }

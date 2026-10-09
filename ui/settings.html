@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>书友设置</title>
+<link rel="stylesheet" href="./assets/settings.css">
+</head>
+<body>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var theme = q.get("hana-theme") || "inherit";
+  var hanaCss = q.get("hana-css") || "";
+  document.body.setAttribute("data-hana-theme", theme);
+  if (hanaCss) {
+    var link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = hanaCss;
+    document.head.appendChild(link);
+  }
+})();
+window.__hanaReady = import("./assets/sdk.js").then(function (m) { m.hana.ready(); }).catch(function () {});
+</script>
+<main class="page" id="page">
+  <section class="card">
+    <h2>解析与导出</h2>
+    <label class="row">
+      <span class="label">Python command</span>
+      <input type="text" id="pythonCommand" spellcheck="false">
+      <span class="hint">EPUB 解析用的 Python 可执行命令</span>
+    </label>
+    <label class="row">
+      <span class="label">导出目录</span>
+      <input type="text" id="exportDir" spellcheck="false" placeholder="留空则导出时需先配置">
+      <span class="hint">Markdown 导出目录的绝对路径</span>
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>书友</h2>
+    <label class="row">
+      <span class="label">书友模型</span>
+      <select id="companionModel"></select>
+      <span class="hint" id="modelHint">书友对话使用的模型</span>
+    </label>
+    <div class="row col">
+      <span class="label">书友人格</span>
+      <textarea id="companionPersona" rows="12" spellcheck="false"></textarea>
+      <span class="hint">人格全文，随你改写；清空保存即恢复内置人格（<span id="personaCount"></span>）</span>
+      <button class="link-btn" id="resetPersona" type="button">恢复内置人格</button>
+    </div>
+  </section>
+
+  <div class="actions">
+    <button class="save" id="saveBtn" type="button">保存</button>
+    <span class="save-state" id="saveState"></span>
+  </div>
+  <div class="load-error" id="loadError" hidden></div>
+</main>
+<script type="module" src="./assets/settings.js"></script>
+</body>
+</html>

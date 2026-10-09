@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "bookmate",
   "name": "书友 · AI 陪伴阅读",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "EPUB 沉浸式阅读与书友式章节对话。陪伴阅读、反思阅读、跨章节记忆。",
   "entry": "index.js",
   "icon": "assets/icon.svg",
@@ -12,13 +12,12 @@
     "app/resources.read",
     "app/resources.write",
     "app/tools.expose-to-model",
-    "app/session.start-turn",
-    "app/agents.read",
     "app/models.infer"
   ],
   "contributes": {
     "settings": {
       "title": "书友",
+      "ui": { "route": "/settings.html" },
       "schema": {
         "properties": {
           "pythonCommand": {
@@ -30,13 +29,19 @@
           "exportDir": {
             "type": "string",
             "title": "导出目录",
-            "description": "Markdown 导出目录。建议指向生活外脑 raw/阅读 目录",
+            "description": "Markdown 导出目录的绝对路径；留空则导出时需先配置。",
             "default": ""
           },
-          "companionAgentId": {
+          "companionModel": {
             "type": "string",
-            "title": "书友人格 Agent",
-            "description": "书友对话使用的专用助手。留空则跟随当前助手；首次使用会自动复用或创建专用「书友」助手并填入此处。",
+            "title": "书友模型",
+            "description": "书友对话使用的模型。填模型目录里的 id（可含 /，如 openai/gpt-oss-120b）或显示名；留空跟随当前焦点模型。",
+            "default": ""
+          },
+          "companionPersona": {
+            "type": "string",
+            "title": "书友人格",
+            "description": "书友的人格全文，可自由改写。留空使用内置人格（约 500 字：并肩读书的伙伴，答疑为先，不抬杠）。",
             "default": ""
           }
         }

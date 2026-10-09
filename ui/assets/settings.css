@@ -1,0 +1,61 @@
+/* 书友设置页：与阅读器同源的纸面审美，宿主容器负责外侧留白 */
+:root{
+  --bg:#F7F1E6; --paper:#FCF8EF; --ink:#2B2620; --ink-soft:#6B6055; --ink-faint:#988A7A;
+  --line:rgba(120,100,70,.18); --line-strong:rgba(120,100,70,.36);
+  --accent:#A87F4B; --accent-soft:rgba(168,127,75,.12);
+}
+body[data-hana-theme="dark"],body[data-theme="dark"]{
+  --bg:#1B1712; --paper:#241E17; --ink:#E7DCCB; --ink-soft:#B7A992; --ink-faint:#7E7260;
+  --line:rgba(190,160,110,.16); --line-strong:rgba(190,160,110,.34);
+  --accent:#C09A60; --accent-soft:rgba(192,154,96,.14);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--ink);font-size:14px;line-height:1.7;
+}
+.page{max-width:640px;margin:0 auto;padding:8px 0 40px}
+.card{
+  background:var(--paper);border:1px solid var(--line);border-radius:12px;
+  padding:20px 22px 16px;margin:16px 0;
+}
+.card h2{
+  margin:0 0 14px;font-family:"Source Han Serif SC","Noto Serif CJK SC","STSong","SimSun",serif;
+  font-size:15px;font-weight:600;letter-spacing:.08em;
+}
+.row{display:block;margin-bottom:16px}
+.row:last-child{margin-bottom:4px}
+.label{display:block;font-size:12.5px;color:var(--ink-soft);margin-bottom:6px;letter-spacing:.04em}
+.hint{display:block;font-size:11.5px;color:var(--ink-faint);margin-top:5px}
+input[type="text"],select,textarea{
+  width:100%;border:1px solid var(--line);border-radius:8px;background:var(--bg);
+  color:var(--ink);padding:8px 11px;font-size:13.5px;font-family:inherit;outline:none;
+  transition:border-color .2s;
+}
+input[type="text"]:focus,select:focus,textarea:focus{border-color:var(--accent)}
+textarea{
+  resize:vertical;min-height:220px;line-height:1.9;
+  font-family:"Source Han Serif SC","Noto Serif CJK SC","STSong","SimSun",serif;font-size:13.5px;
+}
+.link-btn{
+  border:none;background:transparent;color:var(--accent);font-size:12px;cursor:pointer;
+  padding:2px 0;margin-top:4px;letter-spacing:.04em;
+}
+.link-btn:hover{text-decoration:underline;text-underline-offset:3px}
+.actions{display:flex;align-items:center;gap:12px;padding:0 2px}
+.save{
+  border:none;border-radius:8px;background:var(--accent);color:#FBF6EC;
+  font-size:13.5px;padding:8px 26px;cursor:pointer;letter-spacing:.1em;
+  transition:opacity .2s;
+}
+.save:hover{opacity:.88}
+.save:disabled{opacity:.45;cursor:default}
+body[data-hana-theme="dark"] .save{color:#241E14}
+.save-state{font-size:12px;color:var(--ink-faint)}
+.save-state.ok{color:var(--accent)}
+.save-state.err{color:#B0553F}
+.load-error{
+  margin:16px 2px;padding:12px 14px;border:1px solid rgba(176,85,63,.4);border-radius:8px;
+  color:#B0553F;font-size:12.5px;
+}

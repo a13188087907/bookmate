@@ -1,21 +1,104 @@
 /* v2：reload 即进程重启，lib 被 ESM 缓存钉死的问题不存在了，恢复静态导入。
    loadLib 保留为兼容包装（原调用点不动），直接返回静态导入的函数。 */
-import { buildCompanionPrompt } from "../lib/companion.js";
 import { generateChapterNote, buildSkeletonContext } from "../lib/skeleton.js";
 import { exportBookMarkdown } from "../lib/export.js";
-import { ensureCompanionAgent } from "../lib/companion-agent.js";
 import { requireRuntime } from "../src/runtime.js";
+import { readAppModelStream } from "../sdk/app-contract/model-stream.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 
 function loadLib() {
   return Promise.resolve({
-    buildCompanionPrompt,
     generateChapterNote,
     buildSkeletonContext,
     exportBookMarkdown,
-    ensureCompanionAgent,
   });
+}
+
+/* 内置书友人格：设置项 companionPersona 留空时使用。人格全文对用户可见、可自由改写。 */
+const DEFAULT_PERSONA = [
+  "你叫书友，是一位和读者并肩读书的伙伴。你认真读过这本书，有自己的理解。",
+  "你的第一职责是答疑：读者问什么，就先把什么解释清楚。解释时用大白话，用类比和具体例子，把抽象概念落到地面上。",
+  "当读者表达自己的观点时，你再进入讨论：回应他的观点，补充他可能没看到的视角，必要时追问一句。",
+  "读者没有发起讨论时，你不反驳、不抬杠、不反问。回答完就停在回答上，不给每段话接一个挑战的尾巴。",
+  "禁止用反问回答提问；禁止揣测读者‘真正想问什么’；禁止评价问题本身。直接正面回答。",
+  "读者没问的不要主动教：不主动总结章节、不罗列知识点。",
+  "说话像朋友，用中文，不用 Markdown。",
+].join("\n");
+
+/* 书友模型解析：设置项 companionModel 优先（目录 id / provider/id / 显示名均可）；
+   留空跟随当前焦点模型（model:list 的 isCurrent 项）。解析不出给可行动的错误。 */
+async function resolveCompanionModel(runtime) {
+  const configured = String(await getConfig(runtime, "companionModel").catch(() => "") || "").trim();
+  const listed = await runtime.models?.list?.().catch(() => null);
+  const models = Array.isArray(listed?.models) ? listed.models : [];
+  if (configured) {
+    const hit = models.find(
+      (m) => m?.id === configured || `${m?.provider}/${m?.id}` === configured || m?.name === configured,
+    );
+    if (hit) return { provider: hit.provider, model: hit.id, label: hit.name || hit.id };
+    const slash = configured.indexOf("/");
+    if (slash > 0 && slash < configured.length - 1) {
+      return { provider: configured.slice(0, slash), model: configured.slice(slash + 1), label: configured };
+    }
+    throw new Error(`书友模型「${configured}」不在模型目录里，请到书友设置检查`);
+  }
+  const current = models.find((m) => m?.isCurrent);
+  if (current) return { provider: current.provider, model: current.id, label: current.name || current.id };
+  throw new Error("未能解析默认模型，请到书友设置里指定书友模型");
+}
+
+/* 书友对话核心（B 路径）：人格 + 上下文进 systemPrompt，历史与当前问题进 messages，
+   models.stream 逐事件回调（thinking/delta），返回完整回复与所用模型标签。 */
+async function converseWithModel(runtime, { context, userMessage, history, onEvent }) {
+  const persona =
+    String(await getConfig(runtime, "companionPersona").catch(() => "") || "").trim() || DEFAULT_PERSONA;
+  const { provider, model, label } = await resolveCompanionModel(runtime);
+  const systemPrompt = `${persona}\n\n${context.beforeUser}`;
+  const messages = [
+    ...history.slice(-8).map((m) =>
+      m?.role === "user"
+        ? { role: "user", content: String(m?.content ?? "") }
+        : { role: "assistant", content: [{ type: "text", text: String(m?.content ?? "") }] },
+    ),
+    { role: "user", content: userMessage },
+  ];
+  const requestId = `bookmate-conv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const resp = await runtime.models.stream({
+    requestId,
+    provider,
+    model,
+    systemPrompt,
+    messages,
+    temperature: 0.8,
+  });
+  let accumulated = "";
+  let doneReply = null;
+  for await (const ev of readAppModelStream(resp)) {
+    if (ev.type === "reasoning-delta") {
+      onEvent?.({ type: "thinking", delta: ev.delta });
+    } else if (ev.type === "text-delta") {
+      accumulated += ev.delta;
+      onEvent?.({ type: "delta", text: ev.delta });
+    } else if (ev.type === "done") {
+      doneReply = extractAssistantText(ev.assistant) || accumulated;
+    } else if (ev.type === "error") {
+      throw new Error(ev.error?.message || String(ev.error || "模型流错误"));
+    }
+  }
+  return { reply: doneReply ?? accumulated, modelLabel: label };
+}
+
+/* done.assistant 的文本提取：字符串 / {content} / content 分段数组 多层容错 */
+function extractAssistantText(assistant) {
+  if (!assistant) return "";
+  if (typeof assistant === "string") return assistant;
+  const c = assistant.content ?? assistant.text;
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) {
+    return c.map((p) => (typeof p === "string" ? p : p?.text ?? "")).join("");
+  }
+  return "";
 }
 
 export default function registerBookRoutes(app, ctx) {
@@ -135,19 +218,33 @@ export default function registerBookRoutes(app, ctx) {
     return c.json({ results });
   });
 
-  app.get("/api/agents", async (c) => {
+  /* 设置页读写：自定义设置页（ui/settings.html）的数据面。模型目录随行下发（下拉用） */
+  app.get("/api/settings", async (c) => {
     const runtime = requireRuntime(ctx);
-    try {
-      const raw = await runtime.bus?.request?.("agent:list", { scope: "all", includePluginPrivate: true });
-      const list = Array.isArray(raw) ? raw : (raw?.agents || raw?.items || []);
-      return c.json({
-        agents: list
-          .map((a) => ({ id: a?.id ?? a?.agentId, name: a?.name ?? a?.id ?? a?.agentId }))
-          .filter((a) => a.id),
-      });
-    } catch {
-      return c.json({ agents: [] });
+    const listed = await runtime.models?.list?.().catch(() => null);
+    const models = (Array.isArray(listed?.models) ? listed.models : [])
+      .map((m) => ({ id: m?.id, name: m?.name || m?.id, provider: m?.provider, isCurrent: !!m?.isCurrent }))
+      .filter((m) => m.id && m.provider);
+    return c.json({
+      pythonCommand: (await getConfig(runtime, "pythonCommand").catch(() => null)) ?? "python",
+      exportDir: (await getConfig(runtime, "exportDir").catch(() => null)) ?? "",
+      companionModel: (await getConfig(runtime, "companionModel").catch(() => null)) ?? "",
+      companionPersona: (await getConfig(runtime, "companionPersona").catch(() => null)) ?? "",
+      defaultPersona: DEFAULT_PERSONA,
+      models,
+    });
+  });
+
+  app.put("/api/settings", async (c) => {
+    const runtime = requireRuntime(ctx);
+    const body = await readJson(c);
+    const keys = ["pythonCommand", "exportDir", "companionModel", "companionPersona"];
+    for (const key of keys) {
+      if (Object.prototype.hasOwnProperty.call(body, key)) {
+        await setConfig(runtime, key, String(body[key] ?? ""));
+      }
     }
+    return c.json({ ok: true });
   });
 
   app.get("/api/books", async (c) => {
@@ -217,7 +314,13 @@ export default function registerBookRoutes(app, ctx) {
     if (!chapter) return c.json({ error: "not found" }, 404);
     try {
       const { generateChapterNote } = await loadLib();
-      const note = await generateChapterNote(runtime, bookId, idx, { force: Boolean(body.force) });
+      const dialog = Array.isArray(body.dialog)
+        ? body.dialog.slice(-12).map((d) => ({
+            role: d?.role === "user" ? "读者" : "书友",
+            content: String(d?.content ?? "").slice(0, 400),
+          }))
+        : null;
+      const note = await generateChapterNote(runtime, bookId, idx, { force: Boolean(body.force), dialog });
       return c.json({ ok: true, note });
     } catch (err) {
       runtime.log?.warn?.(`skeleton distill failed (${bookId} ch${idx}): ${err.message}`);
@@ -284,90 +387,40 @@ export default function registerBookRoutes(app, ctx) {
     const body = await readJson(c);
     const chapterIdx = Number(body.chapter ?? 0);
     const userMessage = String(body.message ?? "").slice(0, 2000);
-    const history = Array.isArray(body.history) ? body.history.slice(-6) : [];
-    // 前端显式选择的助手优先；未选择（默认项）时用配置的专用「书友」agent；
-    // 配置未持久化（宿主配置 schema 按进程缓存，新键需重启宿主后才能写）时，
-    // 直接调 ensureCompanionAgent 查重复用已创建的书友 agent，保证人格生效。
-    let agentId =
-      String(body.agentId ?? "").trim() ||
-      (await getConfig(runtime, "companionAgentId").catch(() => null)) ||
-      null;
-    if (!agentId) {
-      const { ensureCompanionAgent } = await loadLib();
-      agentId = await ensureCompanionAgent(runtime).catch(() => null);
-    }
+    const history = Array.isArray(body.history) ? body.history.slice(-8) : [];
+    const paraIdx = Number.isFinite(Number(body.para)) ? Number(body.para) : null;
     const quote = String(body.quote ?? "").trim().slice(0, 500);
 
     const meta = await runtime.store.getMeta(bookId);
     const chapter = await runtime.store.getChapter(bookId, chapterIdx);
     if (!meta || !chapter) return c.json({ error: "not found" }, 404);
 
-    const context = await buildConverseContext(runtime, { bookId, meta, chapterIdx, chapter, quote });
-
-    let reply = null;
-    let mode = "session";
     try {
-      if (runtime.companion?.bus) {
-        reply = await runtime.companion.converse({ bookId, agentId, userMessage, context });
-      }
+      const context = await buildConverseContext(runtime, { bookId, meta, chapterIdx, chapter, quote, paraIdx });
+      const { reply, modelLabel } = await converseWithModel(runtime, { context, userMessage, history });
+      return c.json({ reply, mode: "stream", model: modelLabel });
     } catch (err) {
-      runtime.log?.warn?.(`session converse failed, fallback to sample: ${err.message}`);
+      runtime.log?.warn?.(`converse failed: ${err.message}`);
+      return c.json({ error: err.message }, 502);
     }
-    if (reply == null) {
-      mode = "sample";
-      const { buildCompanionPrompt } = await loadLib();
-      const prompt = buildCompanionPrompt({
-        bookTitle: meta.title,
-        chapterIdx,
-        chapterTitle: chapter.title,
-        chapterText: chapter.paragraphs.join("\n").slice(0, 3000),
-        quote,
-        userMessage,
-        history: [],
-        skeletonContext: context._skeletonBlock ?? null,
-      });
-      reply = await callModel(runtime, prompt, agentId);
-    }
-    return c.json({ reply, mode });
   });
 
   /** 流式对话：SSE（text/event-stream）。事件协议：
-   *  {type:"delta",text} 增量追加 / {type:"done",reply,mode} 完成 / {type:"error",error} 失败。
-   *  宿主当前无流式增量（探测结论），增量 = 完整回复单个 delta，前端表现等价现状不更差。 */
+   *  {type:"thinking",delta} 推理增量 / {type:"delta",text} 正文增量
+   *  {type:"done",reply,model} 完成 / {type:"error",error} 失败。 */
   app.post("/api/books/:bookId/converse/stream", async (c) => {
     const runtime = requireRuntime(ctx);
     const bookId = c.req.param("bookId");
     const body = await readJson(c);
     const chapterIdx = Number(body.chapter ?? 0);
     const userMessage = String(body.message ?? "").slice(0, 2000);
-    // 前端显式选择的助手优先；未选择（默认项）时用配置的专用「书友」agent；
-    // 配置未持久化时（同上）直接 ensure 查重复用，保证人格生效。
-    let agentId =
-      String(body.agentId ?? "").trim() ||
-      (await getConfig(runtime, "companionAgentId").catch(() => null)) ||
-      null;
-    if (!agentId) {
-      const { ensureCompanionAgent } = await loadLib();
-      agentId = await ensureCompanionAgent(runtime).catch(() => null);
-    }
+    const history = Array.isArray(body.history) ? body.history.slice(-8) : [];
+    const paraIdx = Number.isFinite(Number(body.para)) ? Number(body.para) : null;
     const quote = String(body.quote ?? "").trim().slice(0, 500);
 
     const meta = await runtime.store.getMeta(bookId);
     const chapter = await runtime.store.getChapter(bookId, chapterIdx);
     if (!meta || !chapter) return c.json({ error: "not found" }, 404);
-
-    const context = await buildConverseContext(runtime, { bookId, meta, chapterIdx, chapter, quote });
-    const { buildCompanionPrompt } = await loadLib();
-    const promptFallback = buildCompanionPrompt({
-      bookTitle: meta.title,
-      chapterIdx,
-      chapterTitle: chapter.title,
-      chapterText: chapter.paragraphs.join("\n").slice(0, 3000),
-      quote,
-      userMessage,
-      history: [],
-      skeletonContext: context._skeletonBlock ?? null,
-    });
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
@@ -378,26 +431,14 @@ export default function registerBookRoutes(app, ctx) {
           } catch {}
         };
         try {
-          let reply = null;
-          let mode = "session";
-          if (runtime.companion?.bus) {
-            try {
-              reply = await runtime.companion.converseStream({
-                bookId,
-                agentId,
-                userMessage,
-                context,
-                onDelta: (text) => send({ type: "delta", text }),
-              });
-            } catch (err) {
-              runtime.log?.warn?.(`session converse failed, fallback to sample: ${err.message}`);
-            }
-          }
-          if (reply == null) {
-            mode = "sample";
-            reply = await callModel(runtime, promptFallback, agentId);
-          }
-          send({ type: "done", reply, mode });
+          const context = await buildConverseContext(runtime, { bookId, meta, chapterIdx, chapter, quote, paraIdx });
+          const { reply, modelLabel } = await converseWithModel(runtime, {
+            context,
+            userMessage,
+            history,
+            onEvent: (ev) => send(ev),
+          });
+          send({ type: "done", reply, model: modelLabel });
         } catch (err) {
           runtime.log?.warn?.(`converse stream failed: ${err.message}`);
           send({ type: "error", error: err.message });
@@ -467,38 +508,50 @@ async function callModel(runtime, prompt, agentId = null) {
  * system 提示词保持既有文本原样；beforeUser 注入章节背景 + 引用 + 骨架块。
  * 返回对象额外挂 _skeletonBlock 供 sample 兜底 prompt 复用（宿主序列化时多字段无害）。
  */
-async function buildConverseContext(runtime, { bookId, meta, chapterIdx, chapter, quote }) {
-  const chapterText = chapter.paragraphs.join("\n").slice(0, 3000);
-  // 引用定位：有引文时优先截取引文前后段落作为上下文
+async function buildConverseContext(runtime, { bookId, meta, chapterIdx, chapter, quote, paraIdx = null }) {
+  // 引用定位：有引文时优先截取引文前后段落作为上下文；无引用时锚定读者当前阅读位置
   const quoteWindow = findQuoteWindow(chapter.paragraphs, quote);
+  const readingWindow = quote ? null : findReadingWindow(chapter.paragraphs, paraIdx);
+  const chapterText = quote || readingWindow ? null : chapter.paragraphs.join("\n").slice(0, 800);
   // 骨架注入：有内容的骨架压缩成 ≤600 字，追加进 beforeUser
   const skeleton = await runtime.store.getSkeleton(bookId);
-  const { buildSkeletonContext } = await loadLib();
   const skeletonBlock = buildSkeletonContext(skeleton);
   const context = {
     system: [
       "你是一位和读者共读一本书的书友。你读过这本书，有自己的理解和立场。",
-      "行为准则：",
-      "1. 读者提问时，先把问题解释清楚：可以讲正文、可以展开背景、可以举具体例子，解释到位是第一要务。",
-      "2. 读者表达观点时，先回应观点本身，再给不同视角或追问，把讨论往深推一层。",
-      "3. 禁止用反问回答提问；禁止揣测读者‘真正想问什么’；禁止评价问题本身（如‘这个问题太教科书’）。直接正面回答。",
-      "4. 读者没问的不要主动教：不主动总结章节、不罗列知识点。",
-      "5. 像朋友聊天一样说话，不用 Markdown 格式。",
-      "6. 用中文。",
     ].join("\n"),
     beforeUser: [
       `你们在读《${meta.title}》，当前是第 ${chapterIdx + 1} 章「${chapter.title}」。`,
       quote ? `读者引用了书中这段话，围绕它回应：\n“${quote}”` : null,
       quoteWindow
         ? `引用上下文（引文前后的原文，供你理解它谈论的脉络）：\n${quoteWindow}`
-        : chapterText
-          ? `本章正文开头节选（背景参考）：\n${chapterText.slice(0, 800)}`
-          : null,
+        : readingWindow
+          ? `正文节选（读者当前位置附近，供你理解他读到的脉络）：\n${readingWindow}`
+          : chapterText
+            ? `本章正文开头节选（背景参考）：\n${chapterText}`
+            : null,
       skeletonBlock ? `【全书骨架（前情回顾，回答涉及前文时可引用，不必复述）】\n${skeletonBlock}` : null,
     ].filter(Boolean).join("\n\n"),
   };
   context._skeletonBlock = skeletonBlock;
   return context;
+}
+
+/* 以读者当前段落为锚点，向前后扩展截取上下文窗口（约 1200 字）。
+   paraIdx 无效时返回 null，调用方退回开头节选。 */
+function findReadingWindow(paragraphs, paraIdx, budget = 1200) {
+  if (!Array.isArray(paragraphs) || !paragraphs.length) return null;
+  const idx = Number.isFinite(paraIdx) ? Math.max(0, Math.min(paraIdx, paragraphs.length - 1)) : null;
+  if (idx == null) return null;
+  let lo = idx;
+  let hi = idx;
+  let total = String(paragraphs[idx] ?? "").length;
+  while (total < budget && (lo > 0 || hi < paragraphs.length - 1)) {
+    if (hi < paragraphs.length - 1) { hi++; total += String(paragraphs[hi] ?? "").length; }
+    if (total >= budget) break;
+    if (lo > 0) { lo--; total += String(paragraphs[lo] ?? "").length; }
+  }
+  return paragraphs.slice(lo, hi + 1).join("\n");
 }
 
 /* 用引文在本章段落里定位，截取前后各 2 段作为上下文窗口（约 1200 字）。

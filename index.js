@@ -7,8 +7,6 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { BookStore } from "./lib/store-v3.js";
 import { PythonParser } from "./lib/epub-parse.js";
-import { SessionCompanion } from "./lib/session-companion-v2.js";
-import { ensureCompanionAgent } from "./lib/companion-agent.js";
 import { exportBookMarkdown } from "./lib/export.js";
 import { setRuntime, requireRuntime } from "./src/runtime.js";
 
@@ -76,18 +74,9 @@ export default defineApp(async (sdk) => {
     log: sdk.logger,
   });
 
-  const companion = new SessionCompanion({
-    bus: sdk.bus ?? null,
-    dataDir: sdk.dataDir,
-    pluginId: "bookmate",
-    log: sdk.logger,
-  });
-  await companion.init();
-
   const runtime = {
     store,
     parser,
-    companion,
     bus: sdk.bus ?? null,
     pluginId: "bookmate",
     log: sdk.logger,
@@ -163,7 +152,7 @@ export default defineApp(async (sdk) => {
       const exportDir = await readConfig(sdk, "exportDir", null);
       if (!exportDir) {
         return {
-          content: [{ type: "text", text: "尚未配置导出目录：请先在应用设置中填写「导出目录」（exportDir），推荐指向生活外脑 raw/阅读 目录。" }],
+          content: [{ type: "text", text: "尚未配置导出目录：请先在应用设置中填写「导出目录」（exportDir）。" }],
         };
       }
       try {
@@ -177,15 +166,6 @@ export default defineApp(async (sdk) => {
       }
     },
   });
-
-  // 专用「书友」人格 agent：推迟到激活窗口之后再初始化。
-  // 隔离环境（smoke）没有 agent 服务，窗口内的 RPC 故障会被记为装载失败（应用侧 catch 也拦不住归因）；
-  // 真实宿主里这几秒延迟无感（首次对话时也会走 ensure 查重复用兑底）。
-  setTimeout(() => {
-    ensureCompanionAgent(runtime).catch((err) => {
-      sdk.logger.warn(`书友：专用 agent 初始化失败：${err.message}`).catch(() => {});
-    });
-  }, 5000);
 
   await sdk.logger.info("bookmate v2 loaded").catch(() => {});
 });
