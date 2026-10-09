@@ -322,11 +322,17 @@ function buildLayout() {
   quoteBar.style.display = "none";
   const sbComposer = el("div", "sb-composer");
   const composerRow = el("div", "composer-row");
-  const input = el("input");
-  input.placeholder = "提笔问书友…";
+  const input = el("textarea");
+  input.rows = 1;
+  input.placeholder = "提笔问书友…（Enter 寄出，Shift+Enter 换行）";
   input.autocomplete = "off";
-  const sendBtn = el("button", null, "发送");
-  composerRow.append(input, sendBtn);
+  /* 随内容自动长高，六行封顶 */
+  const autogrow = () => {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 150) + "px";
+  };
+  input.addEventListener("input", autogrow);
+  composerRow.append(input);
   sbComposer.append(quoteBar, composerRow);
   sidebar.append(sbHead, sbMenu, sbBody, sbComposer);
 
@@ -335,9 +341,11 @@ function buildLayout() {
     sidebar.classList.toggle("open", open);
     chatBtn.classList.toggle("active", open);
   });
-  sendBtn.addEventListener("click", sendMessage);
   input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) sendMessage();
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
   });
 
   /* 顶栏章节名：点住则钉住导轨，再点松开 */
@@ -350,7 +358,7 @@ function buildLayout() {
 
   /* 键盘：左右方向键跳章 */
   document.addEventListener("keydown", (e) => {
-    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
     if (!state.bookId) return;
     if (e.key === "ArrowRight") jumpToChapter(Math.min(state.chapterIdx + 1, state.chapters.length - 1));
     if (e.key === "ArrowLeft") jumpToChapter(Math.max(state.chapterIdx - 1, 0));
@@ -1393,7 +1401,7 @@ function quoteToCompanion(text) {
   hideMarkToolbar();
   renderQuoteBar();
   openSidebar();
-  $(".composer-row input").focus();
+  $(".composer-row textarea").focus();
 }
 
 function openSidebar() {
@@ -1571,13 +1579,14 @@ function saveChatArchive() {
 }
 
 async function sendMessage() {
-  const input = $(".composer-row input");
+  const input = $(".composer-row textarea");
   const message = input.value.trim();
   if ((!message && !state.pendingQuote) || state.busy || !state.bookId || state.viewingThread) return;
   const quote = state.pendingQuote?.text || undefined;
   const sendChapter = state.chapterIdx; // 上下文随当下阅读位置，记录仍是全书一段
   const sendPara = state.lastVisiblePara || 0;
   input.value = "";
+  input.style.height = "auto";
   state.pendingQuote = null;
   renderQuoteBar();
   const userEntry = { role: "user", content: message || "这段话怎么理解？", quote };
@@ -1585,7 +1594,6 @@ async function sendMessage() {
   saveChatArchive();
   renderChat();
   state.busy = true;
-  $(".composer-row button").disabled = true;
   try {
     const historyPayload = state.history.slice(-9, -1).map((m) => ({ role: m.role, content: m.content }));
     const reply = await converseStream(sendChapter, sendPara, userEntry.content, quote, historyPayload);
@@ -1596,7 +1604,6 @@ async function sendMessage() {
     saveChatArchive();
   }
   state.busy = false;
-  $(".composer-row button").disabled = false;
   renderChat();
 }
 

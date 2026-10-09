@@ -360,23 +360,18 @@ body[data-theme="dark"]{
 .quote-bar .quote-text{flex:1;max-height:56px;overflow:hidden;word-break:break-word}
 .quote-x{border:none;background:transparent;color:var(--ink-faint);cursor:pointer;font-size:13px;padding:0}
 .composer-row{
-  display:flex;align-items:center;gap:12px;
+  display:flex;align-items:flex-end;gap:12px;
   border-bottom:1px solid var(--line-strong);padding-bottom:7px;
   transition:border-color .25s;
 }
 .composer-row:focus-within{border-bottom-color:var(--accent)}
-.composer-row input{
-  flex:1;border:none;background:transparent;padding:2px 0;
-  font-family:var(--reader-font-family,serif);font-size:15px;color:var(--ink);outline:none;
+.composer-row textarea{
+  flex:1;border:none;background:transparent;padding:2px 0;resize:none;
+  font-family:var(--reader-font-family,serif);font-size:15px;line-height:1.75;
+  color:var(--ink);outline:none;max-height:150px;overflow-y:auto;
+  scrollbar-width:thin;
 }
-.composer-row input::placeholder{color:var(--ink-faint)}
-.composer-row button{
-  flex:none;border:none;background:transparent;cursor:pointer;
-  color:var(--accent);font-size:13.5px;font-family:inherit;
-  padding:2px 2px;letter-spacing:.06em;
-}
-.composer-row button:hover{text-decoration:underline;text-underline-offset:3px}
-.composer-row button:disabled{opacity:.5;cursor:default;text-decoration:none}
+.composer-row input::placeholder,.composer-row textarea::placeholder{color:var(--ink-faint)}
 
 /* ---------- Markdown 气泡内容 ---------- */
 .md p{margin:0 0 .6em}
