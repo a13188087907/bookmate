@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "bookmate",
   "name": "书友 · AI 陪伴阅读",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "EPUB 沉浸式阅读与书友式章节对话。陪伴阅读、反思阅读、跨章节记忆。",
   "entry": "index.js",
   "icon": "assets/icon.svg",
