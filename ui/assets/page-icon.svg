@@ -1,4 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <path d="M48 56c26-10 52-10 80 2 28-12 54-12 80-2v140c-26-10-52-10-80 2-28-12-54-12-80-2V56z" fill="none" stroke="#A87F4B" stroke-width="18" stroke-linejoin="round"/>
-  <path d="M128 58v140" stroke="#A87F4B" stroke-width="18" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <g transform="rotate(-4 128 128)">
+    <rect x="46" y="46" width="164" height="164" rx="24" fill="#A87F4B"/>
+    <text x="128" y="131" font-family="STSong,SimSun,serif" font-size="98" fill="#F7F1E6" text-anchor="middle" dominant-baseline="central">书</text>
+  </g>
 </svg>
